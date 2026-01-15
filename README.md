@@ -59,7 +59,7 @@ okiro cleanup              # Remove all variation workspaces
 
 ## How it works
 
-1. **Efficient cloning** — Uses APFS clones on macOS and btrfs reflinks on Linux for instant, space-efficient copies. Falls back to rsync elsewhere.
+1. **Zero-cost clones** — Uses APFS clones on macOS and btrfs reflinks on Linux. 100 clones of a 10GB project still uses ~10GB on disk—they share the same blocks until modified. Only changed files allocate new space.
 
 2. **Isolated workspaces** — Each variation is a full copy at `~/.okiro/<project>/var-N/`. Open them in separate editor windows, run different agents, go wild.
 
