@@ -1,6 +1,6 @@
 {
   "name": "okiro",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Spawn parallel AI coding variations, compare approaches, promote the winner",
   "type": "module",
   "bin": {
