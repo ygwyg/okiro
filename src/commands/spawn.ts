@@ -14,11 +14,17 @@ import {
   promptForVariationDirections,
   writeAIConfigFiles,
 } from '../lib/prompt.js';
+import {
+  AgentCLI,
+  detectAgentCLI,
+  buildAgentCommand,
+} from '../lib/agent.js';
 
 export interface SpawnOptions {
   force?: boolean;
   noTerminal?: boolean;
   prompt?: boolean | string;
+  run?: boolean | AgentCLI;
 }
 
 export async function spawn(
@@ -95,6 +101,27 @@ export async function spawn(
   console.log(chalk.green(`\n✓ Created ${count} variations\n`));
 
   if (!options.noTerminal) {
-    await openTerminals(sessions, `okiro-${projectName}`);
+    let agentCommands: string[] | undefined;
+    
+    if (options.run) {
+      const requestedCLI = typeof options.run === 'string' ? options.run : undefined;
+      const detectedCLI = requestedCLI || await detectAgentCLI();
+      
+      if (detectedCLI) {
+        const basePrompt = typeof options.prompt === 'string' ? options.prompt : '';
+        agentCommands = sessions.map((_, i) => {
+          const direction = directions[i] || '';
+          const fullPrompt = direction 
+            ? `${basePrompt}\n\nDirection: ${direction}`.trim()
+            : basePrompt;
+          return fullPrompt ? buildAgentCommand(detectedCLI, fullPrompt) : '';
+        });
+        console.log(chalk.cyan(`Running agents with ${detectedCLI}...\n`));
+      } else {
+        console.log(chalk.yellow('No AI CLI found (claude, opencode, or codex). Opening terminals only.\n'));
+      }
+    }
+    
+    await openTerminals(sessions, `okiro-${projectName}`, agentCommands);
   }
 }

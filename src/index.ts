@@ -26,11 +26,13 @@ program
   .option('-f, --force', 'Replace existing variations')
   .option('--no-terminal', 'Do not open terminal sessions')
   .option('--prompt [task]', 'Prompt for direction per variation')
+  .option('--run [cli]', 'Auto-run AI agent (claude, opencode, or codex)')
   .action(async (count: string, options) => {
     await spawn(parseInt(count, 10), {
       force: options.force,
       noTerminal: !options.terminal,
       prompt: options.prompt,
+      run: options.run === true ? true : options.run,
     });
   });
 
@@ -84,6 +86,8 @@ program.addHelpText('after', `
 Examples:
   $ okiro 3                    Create 3 variations
   $ okiro 3 --prompt           Create 3 with AI directions
+  $ okiro 3 --prompt --run     Create 3 and auto-run AI agents
+  $ okiro 3 --run=claude       Force use Claude Code
   $ okiro status               Show variation status  
   $ okiro diff var-1           Diff original vs var-1
   $ okiro compare              Open diff viewer

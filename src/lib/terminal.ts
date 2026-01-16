@@ -26,39 +26,46 @@ function isInsideVSCodeOrCursor(): boolean {
 
 export async function openTerminals(
   sessions: TerminalSession[],
-  sessionName: string
+  sessionName: string,
+  agentCommands?: string[]
 ): Promise<void> {
   if (isInsideVSCodeOrCursor()) {
-    printManualInstructions(sessions);
+    printManualInstructions(sessions, agentCommands);
     return;
   }
 
   const termProgram = getTerminalProgram();
 
   if (termProgram === 'iTerm.app') {
-    await openWithIterm(sessions);
+    await openWithIterm(sessions, agentCommands);
   } else if (await hasTmux()) {
-    await openWithTmux(sessions, sessionName);
+    await openWithTmux(sessions, sessionName, agentCommands);
   } else if (termProgram === 'Apple_Terminal') {
-    await openWithTerminalApp(sessions);
+    await openWithTerminalApp(sessions, agentCommands);
   } else if (process.platform === 'darwin') {
-    await openWithTerminalApp(sessions);
+    await openWithTerminalApp(sessions, agentCommands);
   } else {
-    printManualInstructions(sessions);
+    printManualInstructions(sessions, agentCommands);
   }
 }
 
-async function openWithIterm(sessions: TerminalSession[]): Promise<void> {
+async function openWithIterm(sessions: TerminalSession[], agentCommands?: string[]): Promise<void> {
   const script = `
     tell application "iTerm"
       activate
       tell current window
-        ${sessions.map((session) => `
+        ${sessions.map((session, i) => {
+          const agentCmd = agentCommands?.[i];
+          const fullCmd = agentCmd 
+            ? `cd '${session.path}' && clear && echo '[ ${session.id} ]' && ${agentCmd}`
+            : `cd '${session.path}' && clear && echo '[ ${session.id} ]'`;
+          return `
           set newTab to (create tab with default profile)
           tell current session of newTab
-            write text "cd '${session.path}' && clear && echo '[ ${session.id} ]'"
+            write text "${fullCmd.replace(/"/g, '\\"')}"
           end tell
-        `).join('\n')}
+        `;
+        }).join('\n')}
       end tell
     end tell
   `;
@@ -71,7 +78,8 @@ async function openWithIterm(sessions: TerminalSession[]): Promise<void> {
 
 async function openWithTmux(
   sessions: TerminalSession[],
-  sessionName: string
+  sessionName: string,
+  agentCommands?: string[]
 ): Promise<void> {
   const existingSession = await checkTmuxSessionExists(sessionName);
   if (existingSession) {
@@ -97,11 +105,17 @@ async function openWithTmux(
     ]);
   }
 
-  for (const session of sessions) {
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i];
+    const agentCmd = agentCommands?.[i];
+    const fullCmd = agentCmd
+      ? `clear && echo "[ ${session.id} ]" && ${agentCmd}`
+      : `clear && echo "[ ${session.id} ]"`;
+    
     await execa('tmux', [
       'send-keys',
       '-t', `${sessionName}:${session.id}`,
-      `clear && echo "[ ${session.id} ]"`,
+      fullCmd,
       'Enter',
     ]);
   }
@@ -125,11 +139,17 @@ async function checkTmuxSessionExists(sessionName: string): Promise<boolean> {
   }
 }
 
-async function openWithTerminalApp(sessions: TerminalSession[]): Promise<void> {
-  for (const session of sessions) {
+async function openWithTerminalApp(sessions: TerminalSession[], agentCommands?: string[]): Promise<void> {
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i];
+    const agentCmd = agentCommands?.[i];
+    const fullCmd = agentCmd
+      ? `cd '${session.path}' && clear && echo '[ ${session.id} ]' && ${agentCmd}`
+      : `cd '${session.path}' && clear && echo '[ ${session.id} ]'`;
+    
     const script = `
       tell application "Terminal"
-        do script "cd '${session.path}' && clear && echo '[ ${session.id} ]'"
+        do script "${fullCmd.replace(/"/g, '\\"')}"
         activate
       end tell
     `;
@@ -141,11 +161,17 @@ async function openWithTerminalApp(sessions: TerminalSession[]): Promise<void> {
   console.log(chalk.dim('Run okiro commands from any window.\n'));
 }
 
-function printManualInstructions(sessions: TerminalSession[]): void {
+function printManualInstructions(sessions: TerminalSession[], agentCommands?: string[]): void {
   console.log(chalk.dim('\nOpen terminals manually:\n'));
 
-  for (const session of sessions) {
-    console.log(`  ${chalk.cyan(session.id)}: cd ${session.path}`);
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i];
+    const agentCmd = agentCommands?.[i];
+    if (agentCmd) {
+      console.log(`  ${chalk.cyan(session.id)}: cd ${session.path} && ${agentCmd}`);
+    } else {
+      console.log(`  ${chalk.cyan(session.id)}: cd ${session.path}`);
+    }
   }
   
   console.log(chalk.dim('\nRun okiro commands from any terminal.\n'));

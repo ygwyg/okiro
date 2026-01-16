@@ -5,14 +5,14 @@ Spawn ephemeral, parallel variations of your codebase. Let multiple AI agents ta
 
 ## Why?
 
-AI agents don’t always get it right the first time.
+AI agents don't always get it right the first time.
 okiro lets you see multiple real implementations before choosing which one belongs in your codebase.
 
 ## What is this exactly?
 
-okiro does not run AI agents for you.
+okiro creates isolated workspaces so tools like Cursor, Claude Code, OpenCode, Codex, or any other agent can work independently in parallel without touching your main codebase.
 
-It creates isolated workspaces so tools like Cursor, Claude, Codex, or any other agent can work independently in parallel without touching your main codebase.
+With `--run`, okiro can automatically launch AI agents in each variation.
 
 Think of it as cheap, disposable branches that are easy to diff and easy to throw away.
 
@@ -33,6 +33,17 @@ okiro 3 --prompt "add dark mode"  # Base task + per-variation directions
 ```
 
 When using `--prompt`, okiro writes instructions to `AGENTS.md` and `.cursor/rules` so AI agents in each workspace know their specific approach.
+
+### Auto-run AI agents
+
+```bash
+okiro 3 --prompt "add auth" --run        # Auto-detect and run claude/opencode/codex
+okiro 3 --prompt "add auth" --run=claude # Force Claude Code
+okiro 3 --prompt "add auth" --run=opencode
+okiro 3 --prompt "add auth" --run=codex
+```
+
+With `--run`, okiro opens terminals and automatically starts the AI agent in each variation. Agents are detected in this order: `claude` → `opencode` → `codex`. If none are installed, terminals open normally.
 
 ### Compare changes
 
@@ -72,15 +83,15 @@ okiro cleanup              # Remove all variation workspaces
 ```bash
 # You want to add authentication but aren't sure about the approach
 cd my-app
-okiro 3 --prompt "add user authentication"
+okiro 3 --prompt "add user authentication" --run
 
 # Enter directions when prompted:
 #   var-1: use Better Auth
 #   var-2: use Clerk
 #   var-3: roll our own with JWT + cookies
 
-# Open each variation in a separate Cursor window
-# Let the AI agents cook...
+# Terminals open with AI agents already running in each variation
+# Watch them cook...
 
 # Compare results
 okiro compare
