@@ -41,7 +41,7 @@ okiro 3 --prompt "add auth" --run=opencode
 okiro 3 --prompt "add auth" --run=codex
 ```
 
-With `--run`, okiro opens terminals and automatically starts the AI agent in each variation. Agents are detected in this order: `claude` → `opencode` → `codex`. If none are installed, terminals open normally.
+With `--run`, okiro opens terminals and automatically starts the AI agent in each variation. If none are installed, terminals open normally.
 
 ### Compare changes
 
