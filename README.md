@@ -12,8 +12,6 @@ okiro lets you see multiple real implementations before choosing which one belon
 
 okiro creates isolated workspaces so tools like Cursor, Claude Code, OpenCode, Codex, or any other agent can work independently in parallel without touching your main codebase.
 
-With `--run`, okiro can automatically launch AI agents in each variation.
-
 Think of it as cheap, disposable branches that are easy to diff and easy to throw away.
 
 ## Install
