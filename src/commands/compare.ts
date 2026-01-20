@@ -719,7 +719,8 @@ function getJudgeHtml(variations: string[]): string {
     
     .hero {
       text-align: center;
-      margin-bottom: 48px;
+      margin-bottom: 32px;
+      padding-top: 40px;
       animation: fadeIn 0.8s ease-out;
     }
     
@@ -728,6 +729,9 @@ function getJudgeHtml(variations: string[]): string {
       display: flex;
       justify-content: center;
       overflow: hidden;
+      padding: 16px;
+      border: 1px solid var(--shadow);
+      background: var(--abyss);
     }
     
     .ascii-art {
@@ -746,17 +750,17 @@ function getJudgeHtml(variations: string[]): string {
     .ascii-art .r { display: block; }
     
     .judge-title {
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 500;
-      letter-spacing: 4px;
+      letter-spacing: 3px;
       text-transform: uppercase;
-      color: var(--gold);
-      margin-top: 24px;
+      color: var(--muted);
+      margin-top: 16px;
       opacity: 0;
-      transition: opacity 0.3s;
+      transition: opacity 0.3s, color 0.3s;
     }
     
-    .judge-title.visible { opacity: 1; }
+    .judge-title.visible { opacity: 1; color: var(--gold); }
     .judge-title.complete { color: var(--success); }
     
     .state { display: none; animation: fadeIn 0.5s ease-out; }
@@ -775,16 +779,18 @@ function getJudgeHtml(variations: string[]): string {
       text-transform: uppercase;
       cursor: pointer;
       transition: all 0.2s;
-      margin-top: 20px;
+      margin-top: 16px;
     }
     
     .start-btn:hover { background: var(--accent-dim); border-color: var(--accent); }
     .start-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .start-btn.hidden { display: none; }
     
     .progress-section {
-      margin-top: 40px;
+      margin-top: 24px;
       border: 1px solid var(--shadow);
       background: var(--abyss);
+      text-align: left;
     }
     
     .progress-header {
@@ -811,7 +817,7 @@ function getJudgeHtml(variations: string[]): string {
     }
     
     .progress-log {
-      max-height: 200px;
+      max-height: 240px;
       overflow-y: auto;
       padding: 12px 20px;
       font-size: 11px;
@@ -822,21 +828,23 @@ function getJudgeHtml(variations: string[]): string {
       color: var(--subtle);
       display: flex;
       gap: 12px;
+      text-align: left;
     }
     
     .log-entry.complete { color: var(--success); }
     .log-entry.current { color: var(--gold); }
-    .log-entry .file { flex: 1; }
-    .log-entry .winner { color: var(--accent); }
+    .log-entry .file { flex: 1; text-align: left; }
+    .log-entry .winner { color: var(--accent); text-align: right; }
     
-    .results { text-align: center; }
+    .results { text-align: left; }
     
     .winner-card {
       background: var(--abyss);
       border: 2px solid var(--accent);
-      padding: 32px;
-      margin-bottom: 32px;
+      padding: 24px;
+      margin-bottom: 24px;
       animation: glowPulse 2s ease-in-out infinite;
+      text-align: left;
     }
     
     @keyframes glowPulse {
@@ -849,18 +857,18 @@ function getJudgeHtml(variations: string[]): string {
       text-transform: uppercase;
       letter-spacing: 3px;
       color: var(--accent);
-      margin-bottom: 8px;
+      margin-bottom: 4px;
     }
     
     .winner-name {
-      font-size: 28px;
+      font-size: 24px;
       font-weight: 500;
       color: var(--bright);
       letter-spacing: 2px;
     }
     
     .winner-summary {
-      margin-top: 16px;
+      margin-top: 12px;
       font-size: 13px;
       color: var(--subtle);
       line-height: 1.7;
@@ -949,10 +957,10 @@ function getJudgeHtml(variations: string[]): string {
     .breakdown-winner { color: var(--accent); font-size: 11px; }
     
     .actions {
-      margin-top: 40px;
+      margin-top: 32px;
       display: flex;
       gap: 16px;
-      justify-content: center;
+      justify-content: flex-start;
     }
     
     .action-btn {
@@ -989,7 +997,7 @@ function getJudgeHtml(variations: string[]): string {
       <div class="hero-graphic">
         <pre class="ascii-art" id="asciiArt"></pre>
       </div>
-      <div class="judge-title" id="judgeTitle">Multi-Agent Judgment</div>
+      <div class="judge-title" id="judgeTitle"></div>
     </header>
 
     <div class="state active" id="startState">
@@ -1149,21 +1157,18 @@ function getJudgeHtml(variations: string[]): string {
       const progressBar = document.getElementById('progressBar');
       const progressLog = document.getElementById('progressLog');
       
-      startBtn.disabled = true;
-      startBtn.textContent = 'Connecting...';
+      startBtn.classList.add('hidden');
       progressSection.style.display = 'block';
       progressLog.innerHTML = '';
       
       judgeTitle.classList.add('visible');
       judgeTitle.classList.remove('complete');
-      judgeTitle.textContent = 'Analyzing...';
+      judgeTitle.textContent = 'Judging...';
 
       const eventSource = new EventSource('/api/judge/stream');
       const fileResults = new Map();
 
-      eventSource.addEventListener('init', (e) => {
-        const data = JSON.parse(e.data);
-        startBtn.textContent = \`Using \${data.cli}...\`;
+      eventSource.addEventListener('init', () => {
       });
 
       eventSource.addEventListener('progress', (e) => {
@@ -1206,7 +1211,7 @@ function getJudgeHtml(variations: string[]): string {
           
           const entry = document.createElement('div');
           entry.className = 'log-entry current';
-          entry.innerHTML = '<span class="file">Running final synthesis with Sonnet...</span>';
+          entry.innerHTML = '<span class="file">Running final synthesis...</span>';
           progressLog.appendChild(entry);
         }
       });
@@ -1232,8 +1237,7 @@ function getJudgeHtml(variations: string[]): string {
           document.getElementById('errorMessage').textContent = 'Connection lost. Try again.';
         }
         showState('errorState');
-        startBtn.disabled = false;
-        startBtn.textContent = 'Begin Judgment';
+        startBtn.classList.remove('hidden');
         judgeTitle.classList.remove('visible');
       });
 
@@ -1242,8 +1246,7 @@ function getJudgeHtml(variations: string[]): string {
         eventSource.close();
         document.getElementById('errorMessage').textContent = 'Connection lost. Try again.';
         showState('errorState');
-        startBtn.disabled = false;
-        startBtn.textContent = 'Begin Judgment';
+        startBtn.classList.remove('hidden');
         judgeTitle.classList.remove('visible');
       };
     }
@@ -1296,10 +1299,9 @@ function getJudgeHtml(variations: string[]): string {
     document.getElementById('startBtn').addEventListener('click', runJudgment);
     document.getElementById('retryBtn').addEventListener('click', () => {
       showState('startState');
-      document.getElementById('startBtn').disabled = false;
-      document.getElementById('startBtn').textContent = 'Begin Judgment';
+      document.getElementById('startBtn').classList.remove('hidden');
       document.getElementById('progressSection').style.display = 'none';
-      judgeTitle.textContent = 'Multi-Agent Judgment';
+      judgeTitle.textContent = '';
       judgeTitle.classList.remove('visible', 'complete');
       if (renderedFrames.length > 0) {
         asciiEl.innerHTML = renderedFrames[0];

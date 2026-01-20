@@ -13,8 +13,8 @@ See the example code in the converter tool for implementation details.
 ## Settings Used:
 - Resolution: 4
 - Color Mode: color
-- Brightness: 1.1
-- Contrast: 1.2
-- ASCII Characters: " .:+#@"
+- Brightness: 1
+- Contrast: 1
+- ASCII Characters: " .,:;i1tfLCG08@"
 - Frame Delay: 400ms
 - Total Frames: 122
