@@ -1,10 +1,16 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
 import express from 'express';
 import open from 'open';
 import { getProjectConfig, resolveProjectPath } from '../lib/config.js';
 import { listChangedFiles, ChangedFile } from '../lib/workspace.js';
 import { generateFileDiff } from '../lib/diff.js';
+import { detectAgentCLI } from '../lib/agent.js';
+import { runMultiAgentJudge, VariationDiffs } from '../lib/judge.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export interface CompareOptions {
   port?: number;
@@ -52,7 +58,7 @@ export async function compare(options: CompareOptions): Promise<void> {
 
     for (const variation of project.variations) {
       const files = await listChangedFiles(projectPath, variation.path);
-      
+
       for (const file of files) {
         const existing = fileMap.get(file.path);
         if (existing) {
@@ -69,7 +75,7 @@ export async function compare(options: CompareOptions): Promise<void> {
       }
     }
 
-    const allFiles = Array.from(fileMap.values()).sort((a, b) => 
+    const allFiles = Array.from(fileMap.values()).sort((a, b) =>
       a.path.localeCompare(b.path)
     );
 
@@ -115,6 +121,68 @@ export async function compare(options: CompareOptions): Promise<void> {
 
   app.get('/', (_req, res) => {
     res.send(getCompareHtml(project.variations.map((v) => v.id)));
+  });
+
+  const judgeAnimationPath = path.resolve(__dirname, '../judge/judge-animation');
+  app.use('/judge-animation', express.static(judgeAnimationPath));
+
+  app.get('/judge', (_req, res) => {
+    res.send(getJudgeHtml(project.variations.map((v) => v.id)));
+  });
+
+  app.get('/api/judge/stream', async (_req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const sendEvent = (event: string, data: any) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      const cli = await detectAgentCLI();
+      if (!cli) {
+        sendEvent('error', { message: 'No AI CLI found (claude, opencode, or codex)' });
+        res.end();
+        return;
+      }
+
+      sendEvent('init', { cli, variations: project.variations.map((v) => v.id) });
+      console.log(chalk.dim(`  Using ${cli} for multi-agent judgment...`));
+
+      const variationDiffs: VariationDiffs[] = await Promise.all(
+        project.variations.map(async (variation) => {
+          const changedFiles = await listChangedFiles(projectPath, variation.path);
+          const diffs = await Promise.all(
+            changedFiles.map(async (file) => {
+              const diff = await generateFileDiff(projectPath, variation.path, file.path);
+              return {
+                filePath: diff.filePath,
+                status: diff.status as 'M' | 'A' | 'D',
+                patch: diff.patch,
+                original: diff.original,
+                modified: diff.modified,
+              };
+            })
+          );
+          return { variationId: variation.id, diffs };
+        })
+      );
+
+      const result = await runMultiAgentJudge(cli, variationDiffs, (progress) => {
+        sendEvent('progress', progress);
+      });
+
+      sendEvent('complete', result);
+      console.log(chalk.green('  ✓ Multi-agent judgment complete'));
+    } catch (error: any) {
+      console.error('Judge error:', error?.message || error);
+      sendEvent('error', { message: error?.message || 'Failed to judge variations' });
+    }
+
+    res.end();
   });
 
   app.listen(port, () => {
@@ -218,9 +286,38 @@ function getCompareHtml(variations: string[]): string {
       color: var(--rp-text);
     }
     
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    
     .variation-tabs {
       display: flex;
       gap: 4px;
+    }
+    
+    .judge-btn {
+      padding: 5px 14px;
+      background: linear-gradient(135deg, #7c6fdc22, #7c6fdc11);
+      border: 1px solid #7c6fdc55;
+      border-radius: 4px;
+      color: #c4a7e7;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .judge-btn:hover {
+      background: linear-gradient(135deg, #7c6fdc33, #7c6fdc22);
+      border-color: #7c6fdc88;
+      color: #e0def4;
+      box-shadow: 0 0 12px rgba(124, 111, 220, 0.3);
     }
     
     .variation-tab {
@@ -381,7 +478,10 @@ function getCompareHtml(variations: string[]): string {
         <button id="unifiedBtn">Unified</button>
       </div>
     </div>
-    <div class="variation-tabs" id="variationTabs"></div>
+    <div class="header-right">
+      <div class="variation-tabs" id="variationTabs"></div>
+      <a href="/judge" class="judge-btn">Judge</a>
+    </div>
   </header>
   <main>
     <aside class="sidebar">
@@ -539,6 +639,674 @@ function getCompareHtml(variations: string[]): string {
     }
 
     loadAllFiles();
+  </script>
+</body>
+</html>`;
+}
+
+function getJudgeHtml(variations: string[]): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>okiro - judge</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link href="https://cdn.jsdelivr.net/npm/iosevka-webfont@14.0.0/iosevka.css" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    :root {
+      --void: #08070a;
+      --abyss: #0c0b0f;
+      --shadow: #12111a;
+      --depths: #1a1823;
+      --muted: #3d3a4d;
+      --subtle: #5c5872;
+      --text: #a09caf;
+      --bright: #d4d0e0;
+      --accent: #7c6fdc;
+      --accent-dim: #5a4fb3;
+      --success: #6b9e78;
+      --gold: #f6c177;
+      --love: #eb6f92;
+    }
+    
+    html { font-size: 14px; }
+    
+    body {
+      font-family: 'Iosevka Web', 'Iosevka', monospace;
+      background: var(--void);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.035;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px 256px;
+    }
+    
+    ::selection { background: var(--accent); color: var(--void); }
+    
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 40px 24px 100px;
+      position: relative;
+    }
+    
+    .back-link {
+      position: absolute;
+      top: 24px; left: 24px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+      letter-spacing: 1px;
+      transition: color 0.15s;
+    }
+    
+    .back-link:hover { color: var(--bright); }
+    
+    .hero {
+      text-align: center;
+      margin-bottom: 48px;
+      animation: fadeIn 0.8s ease-out;
+    }
+    
+    .hero-graphic {
+      margin-bottom: 0;
+      display: flex;
+      justify-content: center;
+      overflow: hidden;
+    }
+    
+    .ascii-art {
+      font-family: 'Iosevka Web', 'Iosevka', monospace;
+      font-size: 4px;
+      line-height: 1.4;
+      letter-spacing: 3px;
+      white-space: pre;
+      background: transparent;
+      margin: 0;
+      opacity: 0;
+      transition: opacity 0.5s;
+    }
+    
+    .ascii-art.loaded { opacity: 1; }
+    .ascii-art .r { display: block; }
+    
+    .judge-title {
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-top: 24px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    
+    .judge-title.visible { opacity: 1; }
+    .judge-title.complete { color: var(--success); }
+    
+    .state { display: none; animation: fadeIn 0.5s ease-out; }
+    .state.active { display: block; }
+    
+    .start-state { text-align: center; }
+    
+    .start-btn {
+      background: var(--abyss);
+      border: 1px solid var(--accent-dim);
+      color: var(--bright);
+      padding: 14px 32px;
+      font-family: inherit;
+      font-size: 13px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 20px;
+    }
+    
+    .start-btn:hover { background: var(--accent-dim); border-color: var(--accent); }
+    .start-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    
+    .progress-section {
+      margin-top: 40px;
+      border: 1px solid var(--shadow);
+      background: var(--abyss);
+    }
+    
+    .progress-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--shadow);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .progress-title { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); }
+    .progress-count { font-size: 12px; color: var(--subtle); }
+    
+    .progress-bar-container {
+      height: 4px;
+      background: var(--shadow);
+    }
+    
+    .progress-bar {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.3s ease-out;
+    }
+    
+    .progress-log {
+      max-height: 200px;
+      overflow-y: auto;
+      padding: 12px 20px;
+      font-size: 11px;
+    }
+    
+    .log-entry {
+      padding: 4px 0;
+      color: var(--subtle);
+      display: flex;
+      gap: 12px;
+    }
+    
+    .log-entry.complete { color: var(--success); }
+    .log-entry.current { color: var(--gold); }
+    .log-entry .file { flex: 1; }
+    .log-entry .winner { color: var(--accent); }
+    
+    .results { text-align: center; }
+    
+    .winner-card {
+      background: var(--abyss);
+      border: 2px solid var(--accent);
+      padding: 32px;
+      margin-bottom: 32px;
+      animation: glowPulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes glowPulse {
+      0%, 100% { box-shadow: 0 0 20px rgba(124, 111, 220, 0.2); }
+      50% { box-shadow: 0 0 40px rgba(124, 111, 220, 0.4); }
+    }
+    
+    .winner-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    
+    .winner-name {
+      font-size: 28px;
+      font-weight: 500;
+      color: var(--bright);
+      letter-spacing: 2px;
+    }
+    
+    .winner-summary {
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--subtle);
+      line-height: 1.7;
+    }
+    
+    .rankings {
+      margin-top: 32px;
+      border: 1px solid var(--shadow);
+      background: var(--abyss);
+      text-align: left;
+    }
+    
+    .ranking-item {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--shadow);
+    }
+    
+    .ranking-item:last-child { border-bottom: none; }
+    
+    .ranking-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    
+    .ranking-position {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--muted);
+      width: 28px;
+    }
+    
+    .ranking-position.first { color: var(--gold); }
+    .ranking-position.second { color: var(--subtle); }
+    
+    .ranking-name {
+      font-size: 14px;
+      color: var(--bright);
+      flex: 1;
+      margin-left: 12px;
+    }
+    
+    .ranking-stats {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    
+    .ranking-details { margin-left: 40px; }
+    
+    .strengths, .weaknesses { font-size: 11px; margin-top: 6px; }
+    .strengths span { color: var(--success); margin-right: 4px; }
+    .weaknesses span { color: var(--love); margin-right: 4px; }
+    .strength-item, .weakness-item {
+      color: var(--subtle);
+      display: block;
+      padding-left: 16px;
+      margin-top: 2px;
+    }
+    
+    .file-breakdown {
+      margin-top: 32px;
+      border: 1px solid var(--shadow);
+      background: var(--abyss);
+      text-align: left;
+    }
+    
+    .breakdown-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--shadow);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--muted);
+    }
+    
+    .breakdown-item {
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--shadow);
+      font-size: 12px;
+    }
+    
+    .breakdown-item:last-child { border-bottom: none; }
+    .breakdown-file { color: var(--text); margin-bottom: 4px; }
+    .breakdown-synopsis { color: var(--subtle); font-size: 11px; }
+    .breakdown-winner { color: var(--accent); font-size: 11px; }
+    
+    .actions {
+      margin-top: 40px;
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+    }
+    
+    .action-btn {
+      background: var(--abyss);
+      border: 1px solid var(--shadow);
+      color: var(--text);
+      padding: 12px 24px;
+      font-family: inherit;
+      font-size: 12px;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+    }
+    
+    .action-btn:hover { border-color: var(--accent-dim); color: var(--bright); }
+    .action-btn.primary { border-color: var(--accent-dim); color: var(--bright); }
+    .action-btn.primary:hover { background: var(--accent-dim); }
+    
+    .error-state { text-align: center; color: var(--love); }
+    .error-message { font-size: 13px; margin-bottom: 24px; }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <a href="/" class="back-link">← back to compare</a>
+  
+  <div class="container">
+    <header class="hero">
+      <div class="hero-graphic">
+        <pre class="ascii-art" id="asciiArt"></pre>
+      </div>
+      <div class="judge-title" id="judgeTitle">Multi-Agent Judgment</div>
+    </header>
+
+    <div class="state active" id="startState">
+      <div class="start-state">
+        <button class="start-btn" id="startBtn">Begin Judgment</button>
+        
+        <div class="progress-section" id="progressSection" style="display: none;">
+          <div class="progress-header">
+            <span class="progress-title" id="progressPhase">Analyzing files</span>
+            <span class="progress-count" id="progressCount">0/0</span>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
+          <div class="progress-log" id="progressLog"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="state" id="resultsState">
+      <div class="results">
+        <div class="winner-card">
+          <div class="winner-label">Winner</div>
+          <div class="winner-name" id="winnerName"></div>
+          <div class="winner-summary" id="winnerSummary"></div>
+        </div>
+
+        <div class="rankings" id="rankings"></div>
+        
+        <div class="file-breakdown" id="fileBreakdown">
+          <div class="breakdown-header">Per-File Analysis</div>
+        </div>
+
+        <div class="actions">
+          <a href="/" class="action-btn">Back to Compare</a>
+          <button class="action-btn primary" id="promoteBtn">Promote Winner</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="state" id="errorState">
+      <div class="error-state">
+        <div class="error-message" id="errorMessage"></div>
+        <button class="start-btn" id="retryBtn">Try Again</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const variations = ${JSON.stringify(variations)};
+    const totalFrames = 122;
+    const frameDelay = 80;
+    
+    let renderedFrames = [];
+    let asciiEl = document.getElementById('asciiArt');
+    let judgeTitle = document.getElementById('judgeTitle');
+    let animationInterval = null;
+    let framesLoaded = false;
+    let judgeResult = null;
+
+    function showState(stateId) {
+      document.querySelectorAll('.state').forEach(s => s.classList.remove('active'));
+      document.getElementById(stateId).classList.add('active');
+    }
+
+    async function loadFrames() {
+      const basePath = '/judge-animation';
+      
+      try {
+        const metaRes = await fetch(\`\${basePath}/ascii-metadata.json\`);
+        const meta = await metaRes.json();
+        const chars = meta.asciiChars;
+        
+        function renderFrame(frame) {
+          const { cols, rows, data } = frame;
+          let html = '';
+          let idx = 0;
+          
+          for (let y = 0; y < rows; y++) {
+            let row = '<span class="r">';
+            let currentColor = null;
+            let run = '';
+            
+            for (let x = 0; x < cols; x++) {
+              const [charIdx, r, g, b] = data[idx++];
+              const char = chars[charIdx] || ' ';
+              const color = \`rgb(\${r},\${g},\${b})\`;
+              
+              if (color === currentColor) {
+                run += char === '<' ? '&lt;' : char === '>' ? '&gt;' : char === '&' ? '&amp;' : char;
+              } else {
+                if (run) row += \`<span style="color:\${currentColor}">\${run}</span>\`;
+                currentColor = color;
+                run = char === '<' ? '&lt;' : char === '>' ? '&gt;' : char === '&' ? '&amp;' : char;
+              }
+            }
+            
+            if (run) row += \`<span style="color:\${currentColor}">\${run}</span>\`;
+            row += '</span>';
+            html += row;
+          }
+          return html;
+        }
+        
+        const frame0Res = await fetch(\`\${basePath}/ascii-frame-000.json\`);
+        const frame0 = await frame0Res.json();
+        renderedFrames = [renderFrame(frame0)];
+        asciiEl.innerHTML = renderedFrames[0];
+        asciiEl.classList.add('loaded');
+        
+        const framePromises = [];
+        for (let i = 1; i < totalFrames; i++) {
+          const frameNum = String(i).padStart(3, '0');
+          framePromises.push(
+            fetch(\`\${basePath}/ascii-frame-\${frameNum}.json\`).then(r => r.json())
+          );
+        }
+        
+        const remainingFrames = await Promise.all(framePromises);
+        remainingFrames.forEach(f => renderedFrames.push(renderFrame(f)));
+        framesLoaded = true;
+      } catch (e) {
+        console.error('Failed to load animation frames:', e);
+        asciiEl.textContent = 'OKIRO JUDGE';
+        asciiEl.classList.add('loaded');
+      }
+    }
+
+    function playAnimationToEnd(callback) {
+      if (!framesLoaded || renderedFrames.length === 0) {
+        if (callback) callback();
+        return;
+      }
+
+      let currentFrame = 0;
+      
+      animationInterval = setInterval(() => {
+        currentFrame++;
+        
+        if (currentFrame >= renderedFrames.length) {
+          clearInterval(animationInterval);
+          animationInterval = null;
+          asciiEl.innerHTML = renderedFrames[renderedFrames.length - 1];
+          if (callback) callback();
+          return;
+        }
+        
+        asciiEl.innerHTML = renderedFrames[currentFrame];
+      }, frameDelay);
+    }
+
+    function runJudgment() {
+      const startBtn = document.getElementById('startBtn');
+      const progressSection = document.getElementById('progressSection');
+      const progressPhase = document.getElementById('progressPhase');
+      const progressCount = document.getElementById('progressCount');
+      const progressBar = document.getElementById('progressBar');
+      const progressLog = document.getElementById('progressLog');
+      
+      startBtn.disabled = true;
+      startBtn.textContent = 'Connecting...';
+      progressSection.style.display = 'block';
+      progressLog.innerHTML = '';
+      
+      judgeTitle.classList.add('visible');
+      judgeTitle.classList.remove('complete');
+      judgeTitle.textContent = 'Analyzing...';
+
+      const eventSource = new EventSource('/api/judge/stream');
+      const fileResults = new Map();
+
+      eventSource.addEventListener('init', (e) => {
+        const data = JSON.parse(e.data);
+        startBtn.textContent = \`Using \${data.cli}...\`;
+      });
+
+      eventSource.addEventListener('progress', (e) => {
+        const progress = JSON.parse(e.data);
+        
+        if (progress.phase === 'analyzing') {
+          progressPhase.textContent = 'Analyzing files';
+          progressCount.textContent = \`\${progress.completedFiles}/\${progress.totalFiles}\`;
+          progressBar.style.width = \`\${(progress.completedFiles / progress.totalFiles) * 100}%\`;
+          
+          for (const analysis of progress.fileAnalyses) {
+            if (!fileResults.has(analysis.filePath)) {
+              fileResults.set(analysis.filePath, analysis);
+              const entry = document.createElement('div');
+              entry.className = 'log-entry complete';
+              entry.innerHTML = \`<span class="file">\${analysis.filePath}</span><span class="winner">\${analysis.winner}</span>\`;
+              progressLog.appendChild(entry);
+              progressLog.scrollTop = progressLog.scrollHeight;
+            }
+          }
+          
+          if (progress.currentFile && !fileResults.has(progress.currentFile)) {
+            const existing = progressLog.querySelector('.current');
+            if (existing) existing.remove();
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry current';
+            entry.innerHTML = \`<span class="file">\${progress.currentFile}</span><span class="winner">analyzing...</span>\`;
+            progressLog.appendChild(entry);
+            progressLog.scrollTop = progressLog.scrollHeight;
+          }
+        } else if (progress.phase === 'synthesizing') {
+          progressPhase.textContent = 'Synthesizing';
+          progressCount.textContent = 'Final judgment';
+          progressBar.style.width = '100%';
+          judgeTitle.textContent = 'Synthesizing...';
+          
+          const existing = progressLog.querySelector('.current');
+          if (existing) existing.remove();
+          
+          const entry = document.createElement('div');
+          entry.className = 'log-entry current';
+          entry.innerHTML = '<span class="file">Running final synthesis with Sonnet...</span>';
+          progressLog.appendChild(entry);
+        }
+      });
+
+      eventSource.addEventListener('complete', (e) => {
+        eventSource.close();
+        judgeResult = JSON.parse(e.data);
+        
+        judgeTitle.textContent = 'Judgment Complete';
+        judgeTitle.classList.add('complete');
+        
+        playAnimationToEnd(() => {
+          showResults(judgeResult);
+        });
+      });
+
+      eventSource.addEventListener('error', (e) => {
+        eventSource.close();
+        try {
+          const data = JSON.parse(e.data);
+          document.getElementById('errorMessage').textContent = data.message;
+        } catch {
+          document.getElementById('errorMessage').textContent = 'Connection lost. Try again.';
+        }
+        showState('errorState');
+        startBtn.disabled = false;
+        startBtn.textContent = 'Begin Judgment';
+        judgeTitle.classList.remove('visible');
+      });
+
+      eventSource.onerror = () => {
+        if (eventSource.readyState === EventSource.CLOSED) return;
+        eventSource.close();
+        document.getElementById('errorMessage').textContent = 'Connection lost. Try again.';
+        showState('errorState');
+        startBtn.disabled = false;
+        startBtn.textContent = 'Begin Judgment';
+        judgeTitle.classList.remove('visible');
+      };
+    }
+
+    function showResults(result) {
+      document.getElementById('winnerName').textContent = result.winner;
+      document.getElementById('winnerSummary').textContent = result.summary;
+
+      const rankingsHtml = result.rankings.map((r, i) => {
+        const posClass = i === 0 ? 'first' : i === 1 ? 'second' : '';
+        const strengthsHtml = r.strengths?.map(s => \`<span class="strength-item">+ \${s}</span>\`).join('') || '';
+        const weaknessesHtml = r.weaknesses?.map(w => \`<span class="weakness-item">- \${w}</span>\`).join('') || '';
+        
+        return \`
+          <div class="ranking-item">
+            <div class="ranking-header">
+              <span class="ranking-position \${posClass}">#\${r.rank}</span>
+              <span class="ranking-name">\${r.variation}</span>
+              <span class="ranking-stats">\${r.avgScore?.toFixed(1) || '?'}/10 avg | \${r.fileWins || 0} file wins</span>
+            </div>
+            <div class="ranking-details">
+              \${strengthsHtml ? \`<div class="strengths"><span>+</span>\${strengthsHtml}</div>\` : ''}
+              \${weaknessesHtml ? \`<div class="weaknesses"><span>-</span>\${weaknessesHtml}</div>\` : ''}
+            </div>
+          </div>
+        \`;
+      }).join('');
+
+      document.getElementById('rankings').innerHTML = rankingsHtml;
+      
+      const breakdownHtml = result.fileAnalyses.map(a => \`
+        <div class="breakdown-item">
+          <div class="breakdown-file">\${a.filePath}</div>
+          <div class="breakdown-winner">Winner: \${a.winner}</div>
+          <div class="breakdown-synopsis">\${a.synopsis}</div>
+        </div>
+      \`).join('');
+      
+      document.getElementById('fileBreakdown').innerHTML = '<div class="breakdown-header">Per-File Analysis</div>' + breakdownHtml;
+      
+      document.getElementById('promoteBtn').onclick = () => {
+        if (judgeResult?.winner) {
+          alert(\`To promote the winner, run:\\n\\nokiro promote \${judgeResult.winner}\`);
+        }
+      };
+
+      showState('resultsState');
+    }
+
+    document.getElementById('startBtn').addEventListener('click', runJudgment);
+    document.getElementById('retryBtn').addEventListener('click', () => {
+      showState('startState');
+      document.getElementById('startBtn').disabled = false;
+      document.getElementById('startBtn').textContent = 'Begin Judgment';
+      document.getElementById('progressSection').style.display = 'none';
+      judgeTitle.textContent = 'Multi-Agent Judgment';
+      judgeTitle.classList.remove('visible', 'complete');
+      if (renderedFrames.length > 0) {
+        asciiEl.innerHTML = renderedFrames[0];
+      }
+    });
+
+    loadFrames();
   </script>
 </body>
 </html>`;

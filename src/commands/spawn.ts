@@ -11,6 +11,7 @@ import {
 import { createWorkspace, removeAllWorkspaces } from '../lib/workspace.js';
 import { openTerminals, TerminalSession } from '../lib/terminal.js';
 import {
+  promptForVariationDetails,
   promptForVariationDirections,
   writeAIConfigFiles,
 } from '../lib/prompt.js';
@@ -25,6 +26,7 @@ export interface SpawnOptions {
   noTerminal?: boolean;
   prompt?: boolean | string;
   run?: boolean | AgentCLI;
+  model?: boolean | string;
 }
 
 export async function spawn(
@@ -33,6 +35,10 @@ export async function spawn(
 ): Promise<void> {
   const projectPath = resolveProjectPath();
   const projectName = path.basename(projectPath);
+
+  if (options.model && !options.run) {
+    console.log(chalk.yellow('\nWarning: --model has no effect without --run\n'));
+  }
 
   const existingProject = await getProjectConfig(projectPath);
   if (existingProject && !options.force) {
@@ -56,9 +62,25 @@ export async function spawn(
   const sessions: TerminalSession[] = [];
 
   let directions: string[] = [];
-  if (options.prompt) {
+  let models: string[] = [];
+
+  if (options.prompt || options.run) {
+    const requestedCLI = typeof options.run === 'string' ? options.run : undefined;
+    const detectedCLI = requestedCLI || await detectAgentCLI();
     const basePrompt = typeof options.prompt === 'string' ? options.prompt : undefined;
-    directions = await promptForVariationDirections(count, basePrompt);
+    const askForModel = options.run && options.model === true;
+
+    if (options.prompt && detectedCLI && askForModel) {
+      const result = await promptForVariationDetails(count, detectedCLI, basePrompt, true);
+      directions = result.directions;
+      models = result.models;
+    } else if (options.prompt) {
+      directions = await promptForVariationDirections(count, basePrompt);
+    }
+
+    if (typeof options.model === 'string') {
+      models = Array(count).fill(options.model);
+    }
   }
 
   console.log(chalk.bold(`\nCreating ${count} variations for ${projectName}\n`));
@@ -109,12 +131,15 @@ export async function spawn(
       
       if (detectedCLI) {
         const basePrompt = typeof options.prompt === 'string' ? options.prompt : '';
+        
+        
         agentCommands = sessions.map((_, i) => {
           const direction = directions[i] || '';
           const fullPrompt = direction 
             ? `${basePrompt}\n\nDirection: ${direction}`.trim()
             : basePrompt;
-          return fullPrompt ? buildAgentCommand(detectedCLI, fullPrompt) : '';
+          const model = models[i] || undefined;
+          return fullPrompt ? buildAgentCommand(detectedCLI, fullPrompt, model) : '';
         });
         console.log(chalk.cyan(`Running agents with ${detectedCLI}...\n`));
       } else {

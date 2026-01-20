@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>okiro — parallel AI variations</title>
+  <meta name="description"
+    content="Spawn ephemeral, parallel variations of your codebase. Let multiple AI agents tackle the same task, compare results, promote the best.">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link href="https://cdn.jsdelivr.net/npm/iosevka-webfont@14.0.0/iosevka.css" rel="stylesheet">
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --void: #08070a;
+      --abyss: #0c0b0f;
+      --shadow: #12111a;
+      --depths: #1a1823;
+      --muted: #3d3a4d;
+      --subtle: #5c5872;
+      --text: #a09caf;
+      --bright: #d4d0e0;
+      --accent: #7c6fdc;
+      --accent-dim: #5a4fb3;
+      --cold: #4a7c9b;
+      --success: #6b9e78;
+    }
+
+    html {
+      font-size: 14px;
+    }
+
+    body {
+      font-family: 'Iosevka Web', 'Iosevka', monospace;
+      background: var(--void);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Noise overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.035;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px 256px;
+    }
+
+    ::selection {
+      background: var(--accent);
+      color: var(--void);
+    }
+
+    .container {
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 60px 24px 140px;
+      position: relative;
+    }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      margin-bottom: 80px;
+    }
+
+    .hero-graphic {
+      margin-bottom: 0;
+      display: flex;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .ascii-art {
+      font-family: 'Iosevka Web', 'Iosevka', monospace;
+      font-size: 4px;
+      font-weight: bold;
+      line-height: 1.4;
+      letter-spacing: 3px;
+      white-space: pre;
+      background: transparent;
+      margin: 0;
+      opacity: 0;
+      transition: opacity 0.5s;
+    }
+
+    .ascii-art.loaded {
+      opacity: 1;
+    }
+
+    .ascii-art .r {
+      display: block;
+    }
+
+    .logo {
+      font-size: 20px;
+      font-weight: 500;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      color: var(--bright);
+      margin-bottom: 2px;
+    }
+
+    .logo-jp {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 32px;
+      letter-spacing: 4px;
+    }
+
+    .tagline {
+      font-size: 13px;
+      color: var(--subtle);
+      max-width: 380px;
+      margin: 0 auto;
+      line-height: 1.7;
+    }
+
+    /* Install */
+    .install {
+      margin-bottom: 80px;
+      text-align: center;
+    }
+
+    .install-cmd {
+      display: inline-flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--abyss);
+      border: 1px solid var(--shadow);
+      padding: 16px 28px;
+      font-size: 13px;
+    }
+
+    .install-cmd .prompt {
+      color: var(--muted);
+      user-select: none;
+    }
+
+    .install-cmd code {
+      color: var(--bright);
+      letter-spacing: 0.5px;
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 2px;
+      transition: color 0.15s;
+      display: flex;
+      position: relative;
+      width: 14px;
+      height: 14px;
+    }
+
+    .copy-btn:hover {
+      color: var(--bright);
+    }
+
+    .copy-btn svg {
+      width: 14px;
+      height: 14px;
+      position: absolute;
+      top: 0;
+      left: 0;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+
+    .copy-btn .icon-copy {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .copy-btn .icon-check {
+      opacity: 0;
+      transform: scale(0.8);
+    }
+
+    .copy-btn.copied {
+      color: var(--success);
+    }
+
+    .copy-btn.copied .icon-copy {
+      opacity: 0;
+      transform: scale(0.8);
+    }
+
+    .copy-btn.copied .icon-check {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    /* Section */
+    section {
+      margin-bottom: 72px;
+    }
+
+    h2 {
+      font-size: 10px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      color: var(--muted);
+      margin-bottom: 24px;
+      text-align: center;
+    }
+
+    /* Commands */
+    .commands {
+      border: 1px solid var(--shadow);
+      background: var(--abyss);
+    }
+
+    .cmd {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--shadow);
+      gap: 20px;
+    }
+
+    .cmd:last-child {
+      border-bottom: none;
+    }
+
+    .cmd-syntax {
+      font-size: 12px;
+      color: var(--bright);
+      white-space: nowrap;
+    }
+
+    .cmd-syntax .arg {
+      color: var(--accent);
+    }
+
+    .cmd-syntax .flag {
+      color: var(--cold);
+    }
+
+    .cmd-desc {
+      font-size: 11px;
+      color: var(--subtle);
+      text-align: right;
+    }
+
+    /* FAQ */
+    .faq {
+      border: 1px solid var(--shadow);
+      background: var(--abyss);
+    }
+
+    .faq-item {
+      border-bottom: 1px solid var(--shadow);
+    }
+
+    .faq-item:last-child {
+      border-bottom: none;
+    }
+
+    .faq-q {
+      width: 100%;
+      background: none;
+      border: none;
+      padding: 16px 20px;
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: color 0.15s;
+    }
+
+    .faq-q:hover {
+      color: var(--bright);
+    }
+
+    .faq-q::after {
+      content: '+';
+      font-size: 14px;
+      color: var(--muted);
+      transition: transform 0.2s;
+    }
+
+    .faq-item.open .faq-q::after {
+      transform: rotate(45deg);
+    }
+
+    .faq-a {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+
+    .faq-item.open .faq-a {
+      max-height: 200px;
+    }
+
+    .faq-a-inner {
+      padding: 0 20px 16px;
+      font-size: 12px;
+      color: var(--subtle);
+      line-height: 1.7;
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding-top: 56px;
+      border-top: 1px solid var(--shadow);
+    }
+
+    .links {
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      margin-bottom: 28px;
+    }
+
+    .links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 11px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      transition: color 0.15s;
+    }
+
+    .links a:hover {
+      color: var(--bright);
+    }
+
+    .credit {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.5px;
+    }
+
+    .credit a {
+      color: var(--subtle);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    .credit a:hover {
+      color: var(--accent);
+    }
+
+    /* Animations */
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    .hero {
+      animation: fadeIn 0.8s ease-out;
+    }
+
+    .install {
+      animation: fadeIn 0.8s ease-out 0.15s both;
+    }
+
+    section:nth-of-type(1) {
+      animation: fadeIn 0.8s ease-out 0.3s both;
+    }
+
+    section:nth-of-type(2) {
+      animation: fadeIn 0.8s ease-out 0.45s both;
+    }
+
+    footer {
+      animation: fadeIn 0.8s ease-out 0.6s both;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <header class="hero">
+      <div class="hero-graphic">
+        <pre class="ascii-art" id="asciiArt"></pre>
+      </div>
+      <div class="logo">okiro</div>
+      <div class="logo-jp">起きろ</div>
+      <p class="tagline">Spawn ephemeral, parallel variations of your codebase. Let multiple AI agents tackle the same
+        task, compare results, promote the best.</p>
+    </header>
+
+    <div class="install">
+      <div class="install-cmd">
+        <span class="prompt">$</span>
+        <code>npm install -g okiro</code>
+        <button class="copy-btn" title="Copy">
+          <svg class="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <svg class="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <section>
+      <h2>Commands</h2>
+      <div class="commands">
+        <div class="cmd">
+          <span class="cmd-syntax">okiro <span class="arg">3</span></span>
+          <span class="cmd-desc">create 3 variations</span>
+        </div>
+        <div class="cmd">
+          <span class="cmd-syntax">okiro <span class="arg">3</span> <span class="flag">--prompt</span> <span
+              class="flag">--run</span></span>
+          <span class="cmd-desc">create + run AI agents</span>
+        </div>
+        <div class="cmd">
+          <span class="cmd-syntax">okiro compare</span>
+          <span class="cmd-desc">diff viewer in browser</span>
+        </div>
+        <div class="cmd">
+          <span class="cmd-syntax">okiro judge</span>
+          <span class="cmd-desc">AI ranks variations</span>
+        </div>
+        <div class="cmd">
+          <span class="cmd-syntax">okiro promote <span class="arg">var-2</span></span>
+          <span class="cmd-desc">apply to original</span>
+        </div>
+        <div class="cmd">
+          <span class="cmd-syntax">okiro cleanup</span>
+          <span class="cmd-desc">remove all</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>How it works</h2>
+      <div class="faq">
+        <div class="faq-item">
+          <button class="faq-q">How are copies created?</button>
+          <div class="faq-a">
+            <div class="faq-a-inner">Uses APFS clones on macOS and btrfs reflinks on Linux. 100 clones of a 10GB project
+              still only uses ~10GB on disk—they share the same blocks until modified. Only changed files allocate new
+              space.</div>
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q">Where do variations live?</button>
+          <div class="faq-a">
+            <div class="faq-a-inner">Each variation is stored at ~/.okiro/project-name/var-N/. Open them in separate
+              editor windows, run different agents, experiment freely.</div>
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q">What does --prompt do?</button>
+          <div class="faq-a">
+            <div class="faq-a-inner">Writes instructions to AGENTS.md and .cursor/rules in each variation. AI agents
+              pick up the context and follow the specified direction.</div>
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q">What does --run do?</button>
+          <div class="faq-a">
+            <div class="faq-a-inner">Opens terminals and auto-starts AI agents (Claude Code, OpenCode, or Codex) in each
+              variation. Use --run=claude to force a specific CLI.</div>
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q">What does judge do?</button>
+          <div class="faq-a">
+            <div class="faq-a-inner">Sends all variation diffs to an AI agent which evaluates code quality, correctness,
+              and architecture, then ranks them with a recommendation.</div>
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q">Is my original code safe?</button>
+          <div class="faq-a">
+            <div class="faq-a-inner">Yes. The original codebase is never touched until you explicitly run promote. All
+              experimentation happens in isolated copies.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="links">
+        <a href="https://github.com/ygwyg/okiro">GitHub</a>
+        <a href="https://www.npmjs.com/package/okiro">npm</a>
+      </div>
+      <p class="credit">by <a href="https://x.com/burcs">@burcs</a></p>
+    </footer>
+  </div>
+
+  <script>
+    // FAQ accordion
+    document.querySelectorAll('.faq-q').forEach(btn => {
+      btn.addEventListener('click', () => {
+        btn.parentElement.classList.toggle('open');
+      });
+    });
+
+    // Copy button with checkmark animation
+    const copyBtn = document.querySelector('.copy-btn');
+    copyBtn.addEventListener('click', async () => {
+      await navigator.clipboard.writeText('npm install -g okiro');
+      copyBtn.classList.add('copied');
+      setTimeout(() => {
+        copyBtn.classList.remove('copied');
+      }, 2000);
+    });
+
+    // ASCII Animation - optimized loading
+    (async function () {
+      const asciiEl = document.getElementById('asciiArt');
+      const basePath = 'ascii-animation-1768459259197';
+      const totalFrames = 52;
+      const frameDelay = 100;
+
+      const metaRes = await fetch(`${basePath}/ascii-metadata.json`);
+      const meta = await metaRes.json();
+      const chars = meta.asciiChars;
+
+      function renderFrame(frame) {
+        const { cols, rows, data } = frame;
+        let html = '';
+        let idx = 0;
+
+        for (let y = 0; y < rows; y++) {
+          let row = '<span class="r">';
+          let currentColor = null;
+          let run = '';
+
+          for (let x = 0; x < cols; x++) {
+            const [charIdx, r, g, b] = data[idx++];
+            const char = chars[charIdx] || ' ';
+            const color = `rgb(${r},${g},${b})`;
+
+            if (color === currentColor) {
+              run += char === '<' ? '&lt;' : char === '>' ? '&gt;' : char === '&' ? '&amp;' : char;
+            } else {
+              if (run) row += `<span style="color:${currentColor}">${run}</span>`;
+              currentColor = color;
+              run = char === '<' ? '&lt;' : char === '>' ? '&gt;' : char === '&' ? '&amp;' : char;
+            }
+          }
+
+          if (run) row += `<span style="color:${currentColor}">${run}</span>`;
+          row += '</span>';
+          html += row;
+        }
+        return html;
+      }
+
+      // Load and show frame 0 immediately
+      const frame0Res = await fetch(`${basePath}/ascii-frame-000.json`);
+      const frame0 = await frame0Res.json();
+      const renderedFrames = [renderFrame(frame0)];
+      asciiEl.innerHTML = renderedFrames[0];
+      asciiEl.classList.add('loaded');
+
+      // Load remaining frames in parallel
+      const framePromises = [];
+      for (let i = 1; i < totalFrames; i++) {
+        const frameNum = String(i).padStart(3, '0');
+        framePromises.push(
+          fetch(`${basePath}/ascii-frame-${frameNum}.json`).then(r => r.json())
+        );
+      }
+
+      const remainingFrames = await Promise.all(framePromises);
+      remainingFrames.forEach(f => renderedFrames.push(renderFrame(f)));
+
+      let currentFrame = 0;
+      setInterval(() => {
+        currentFrame = (currentFrame + 1) % renderedFrames.length;
+        asciiEl.innerHTML = renderedFrames[currentFrame];
+      }, frameDelay);
+    })();
+  </script>
+</body>
+
+</html>

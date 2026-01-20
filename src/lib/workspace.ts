@@ -147,6 +147,19 @@ function shouldSkipFile(filename: string): boolean {
     'coverage',
     'AGENTS.md',
     '.cursor',
+    '.turbo',
+    '.sisyphus',
+    '.vscode',
+    '.idea',
+    '.env',
+    '.env.local',
+    '.pnpm-store',
+    '.yarn',
+    'target',
+    '__pycache__',
+    '.pytest_cache',
+    'venv',
+    '.venv',
   ];
   return skipPatterns.includes(filename);
 }

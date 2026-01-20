@@ -1,13 +1,12 @@
 import { execa } from 'execa';
+import { writeFile, mkdir, chmod } from 'fs/promises';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import chalk from 'chalk';
 
 export interface TerminalSession {
   id: string;
   path: string;
-}
-
-function getTerminalProgram(): string | null {
-  return process.env.TERM_PROGRAM || null;
 }
 
 async function hasTmux(): Promise<boolean> {
@@ -20,7 +19,7 @@ async function hasTmux(): Promise<boolean> {
 }
 
 function isInsideVSCodeOrCursor(): boolean {
-  const termProgram = getTerminalProgram();
+  const termProgram = process.env.TERM_PROGRAM || null;
   return termProgram === 'vscode' || termProgram === 'cursor';
 }
 
@@ -34,38 +33,68 @@ export async function openTerminals(
     return;
   }
 
-  const termProgram = getTerminalProgram();
+  if (await hasTmux()) {
+    await openWithTmux(sessions, sessionName, agentCommands);
+    return;
+  }
+
+  const termProgram = process.env.TERM_PROGRAM;
 
   if (termProgram === 'iTerm.app') {
     await openWithIterm(sessions, agentCommands);
-  } else if (await hasTmux()) {
-    await openWithTmux(sessions, sessionName, agentCommands);
-  } else if (termProgram === 'Apple_Terminal') {
-    await openWithTerminalApp(sessions, agentCommands);
-  } else if (process.platform === 'darwin') {
-    await openWithTerminalApp(sessions, agentCommands);
-  } else {
-    printManualInstructions(sessions, agentCommands);
+    return;
   }
+
+  if (process.platform === 'darwin') {
+    await openWithCommandFiles(sessions, sessionName, agentCommands);
+    return;
+  }
+
+  printManualInstructions(sessions, agentCommands);
 }
 
 async function openWithIterm(sessions: TerminalSession[], agentCommands?: string[]): Promise<void> {
+  const scriptDir = join(tmpdir(), `okiro-iterm-${Date.now()}`);
+  await mkdir(scriptDir, { recursive: true });
+
+  const scriptPaths: string[] = [];
+
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i];
+    const agentCmd = agentCommands?.[i];
+    const scriptPath = join(scriptDir, `${session.id}.sh`);
+
+    const scriptContent = agentCmd
+      ? `#!/bin/bash
+cd '${session.path}'
+clear
+echo '[ ${session.id} ]'
+echo ''
+${agentCmd}
+echo ''
+echo '✓ ${session.id} completed'
+exec $SHELL`
+      : `#!/bin/bash
+cd '${session.path}'
+clear
+echo '[ ${session.id} ]'
+exec $SHELL`;
+
+    await writeFile(scriptPath, scriptContent);
+    await chmod(scriptPath, 0o755);
+    scriptPaths.push(scriptPath);
+  }
+
   const script = `
     tell application "iTerm"
       activate
       tell current window
-        ${sessions.map((session, i) => {
-          const agentCmd = agentCommands?.[i];
-          const fullCmd = agentCmd 
-            ? `cd '${session.path}' && clear && echo '[ ${session.id} ]' && ${agentCmd}`
-            : `cd '${session.path}' && clear && echo '[ ${session.id} ]'`;
-          return `
+        ${scriptPaths.map((scriptPath) => `
           set newTab to (create tab with default profile)
           tell current session of newTab
-            write text "${fullCmd.replace(/"/g, '\\"')}"
+            write text "${scriptPath}"
           end tell
-        `;
-        }).join('\n')}
+        `).join('\n')}
       end tell
     end tell
   `;
@@ -73,7 +102,45 @@ async function openWithIterm(sessions: TerminalSession[], agentCommands?: string
   await execa('osascript', ['-e', script]);
 
   console.log(chalk.green(`\n✓ Opened ${sessions.length} iTerm tabs`));
-  console.log(chalk.dim('Cmd+Shift+] to switch tabs. Run okiro commands from any tab.\n'));
+  console.log(chalk.dim('Cmd+Shift+] to switch tabs.\n'));
+}
+
+async function openWithCommandFiles(
+  sessions: TerminalSession[],
+  sessionName: string,
+  agentCommands?: string[]
+): Promise<void> {
+  const scriptDir = join(tmpdir(), `okiro-${sessionName}`);
+  await mkdir(scriptDir, { recursive: true });
+
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i];
+    const agentCmd = agentCommands?.[i];
+    const scriptPath = join(scriptDir, `${session.id}.command`);
+
+    const scriptContent = agentCmd
+      ? `#!/bin/bash
+cd '${session.path}'
+clear
+echo '[ ${session.id} ]'
+echo ''
+${agentCmd}
+echo ''
+echo '✓ ${session.id} completed'
+exec $SHELL`
+      : `#!/bin/bash
+cd '${session.path}'
+clear
+echo '[ ${session.id} ]'
+exec $SHELL`;
+
+    await writeFile(scriptPath, scriptContent);
+    await chmod(scriptPath, 0o755);
+    await execa('open', [scriptPath]);
+  }
+
+  console.log(chalk.green(`\n✓ Opened ${sessions.length} terminal windows`));
+  console.log(chalk.dim('Run okiro commands from any window.\n'));
 }
 
 async function openWithTmux(
@@ -139,28 +206,6 @@ async function checkTmuxSessionExists(sessionName: string): Promise<boolean> {
   }
 }
 
-async function openWithTerminalApp(sessions: TerminalSession[], agentCommands?: string[]): Promise<void> {
-  for (let i = 0; i < sessions.length; i++) {
-    const session = sessions[i];
-    const agentCmd = agentCommands?.[i];
-    const fullCmd = agentCmd
-      ? `cd '${session.path}' && clear && echo '[ ${session.id} ]' && ${agentCmd}`
-      : `cd '${session.path}' && clear && echo '[ ${session.id} ]'`;
-    
-    const script = `
-      tell application "Terminal"
-        do script "${fullCmd.replace(/"/g, '\\"')}"
-        activate
-      end tell
-    `;
-
-    await execa('osascript', ['-e', script]);
-  }
-
-  console.log(chalk.green(`\n✓ Opened ${sessions.length} Terminal windows`));
-  console.log(chalk.dim('Run okiro commands from any window.\n'));
-}
-
 function printManualInstructions(sessions: TerminalSession[], agentCommands?: string[]): void {
   console.log(chalk.dim('\nOpen terminals manually:\n'));
 
@@ -185,3 +230,5 @@ export async function killTmuxSession(sessionName: string): Promise<boolean> {
     return false;
   }
 }
+
+
