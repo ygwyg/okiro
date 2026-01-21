@@ -731,7 +731,7 @@ function getJudgeHtml(variations: string[]): string {
       overflow: hidden;
       padding: 16px;
       border: 1px solid var(--shadow);
-      background: var(--abyss);
+      background: #050507;
     }
     
     .ascii-art {
