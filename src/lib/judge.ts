@@ -80,18 +80,20 @@ function buildFileAnalysisPrompt(
     })
     .join('\n\n');
 
-  return `You are a code judge. Evaluate each variation's changes to: ${filePath}
+  return `Examine the offerings. Judge them.
+
+File: ${filePath}
 
 ${diffSections}
 
-Render your verdict as JSON only:
+RESPOND WITH ONLY THIS JSON FORMAT:
 {
-  "synopsis": "Which approach is superior and why (2-3 sentences)",
+  "synopsis": "Which is worthy and why (2-3 sentences)",
   "scores": { "var-1": 8, "var-2": 6 },
   "winner": "var-1"
 }
 
-Score 1-10. Be decisive. There must be a winner. No changes = 5 (neutral).`;
+Score 1-10. One must prevail. Silence (no changes) = 5.`;
 }
 
 function buildBatchAnalysisPrompt(
@@ -116,21 +118,23 @@ function buildBatchAnalysisPrompt(
 
   const fileList = files.map((f) => f.filePath).join(', ');
 
-  return `You are a code judge. Evaluate each variation's changes to these files: ${fileList}
+  return `Examine the offerings. Judge them.
+
+Files: ${fileList}
 
 ${fileSections}
 
-Render your verdict as JSON array only:
+RESPOND WITH ONLY THIS JSON ARRAY:
 [
   {
     "filePath": "path/to/file.ts",
-    "synopsis": "Which approach is superior and why (2-3 sentences)",
+    "synopsis": "Which is worthy and why (2-3 sentences)",
     "scores": { "var-1": 8, "var-2": 6 },
     "winner": "var-1"
   }
 ]
 
-Score 1-10. Be decisive. There must be a winner per file. No changes = 5 (neutral).`;
+Score 1-10. One must prevail per file. Silence (no changes) = 5.`;
 }
 
 function buildSynthesisPrompt(
@@ -166,35 +170,30 @@ function buildSynthesisPrompt(
     .map((a) => `- ${a.filePath}: Winner=${a.winner} | ${a.synopsis}`)
     .join('\n');
 
-  return `You are the presiding judge. The evidence has been presented. Now deliver your final verdict.
+  return `The offerings have been weighed. Now pass judgment.
 
-## Case Summary
-${variations.length} variations attempted the same task. Each file was evaluated independently.
+${variations.length} variations sought to prove their worth. Each file was judged.
 
-## Evidence
+## The Scores
 ${statsSummary}
 
-## Per-File Verdicts
+## File by File
 ${analysisSummary}
 
-## Your Task
-Deliberate and render final judgment. Consider:
-- Consistency: Which variation performed reliably across files?
-- Critical decisions: Were there make-or-break files where one excelled?
-- Completeness: Did any variation miss the mark entirely?
+One shall be chosen. The rest found wanting.
 
-Deliver your verdict as JSON only:
+RESPOND WITH ONLY THIS JSON FORMAT:
 {
   "winner": "var-N",
   "rankings": [
     {
       "variation": "var-N",
       "rank": 1,
-      "strengths": ["decisive strength"],
-      "weaknesses": ["notable flaw if any"]
+      "strengths": ["what made it worthy"],
+      "weaknesses": ["where it faltered"]
     }
   ],
-  "summary": "Your ruling: why this variation prevails (2-3 sentences)"
+  "summary": "Why this one rises above (2-3 sentences)"
 }`;
 }
 
